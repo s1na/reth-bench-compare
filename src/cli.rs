@@ -12,15 +12,15 @@ use tokio::process::Command;
 use tracing::{debug, info, warn};
 
 use crate::{
-    benchmark::BenchmarkRunner, comparison::ComparisonGenerator, compilation::CompilationManager,
-    git::GitManager, node::NodeManager,
+    benchmark::BenchmarkRunner, client::EthereumClient, clients::{GethClient, RethClient}, comparison::ComparisonGenerator,
+    git::GitManager,
 };
 
-/// Automated reth benchmark comparison between git references
+/// Automated Ethereum client benchmark comparison between git references
 #[derive(Debug, Parser)]
 #[command(
     name = "reth-bench-compare",
-    about = "Compare reth performance between two git references (branches or tags)",
+    about = "Compare Ethereum client performance between two git references (branches or tags)",
     version
 )]
 pub struct Args {
@@ -73,7 +73,11 @@ pub struct Args {
     )]
     pub chain: Chain,
 
-    /// Run reth binary with sudo (for elevated privileges)
+    /// Ethereum client to benchmark (reth or geth)
+    #[arg(long, value_name = "CLIENT", default_value = "reth")]
+    pub client: String,
+
+    /// Run client binary with sudo (for elevated privileges)
     #[arg(long)]
     pub sudo: bool,
 
@@ -97,21 +101,21 @@ pub struct Args {
     #[command(flatten)]
     pub logs: LogArgs,
 
-    /// Additional arguments to pass to baseline reth node command
+    /// Additional arguments to pass to baseline client node command
     ///
     /// Example: `--baseline-args "--debug.tip 0xabc..."`
     #[arg(long, value_name = "ARGS")]
     pub baseline_args: Option<String>,
 
-    /// Additional arguments to pass to feature reth node command
+    /// Additional arguments to pass to feature client node command
     ///
     /// Example: `--feature-args "--debug.tip 0xdef..."`
     #[arg(long, value_name = "ARGS")]
     pub feature_args: Option<String>,
 
-    /// Additional arguments to pass to reth node command (applied to both baseline and feature)
+    /// Additional arguments to pass to client node command (applied to both baseline and feature)
     ///
-    /// All arguments after `--` will be passed directly to the reth node command.
+    /// All arguments after `--` will be passed directly to the client node command.
     /// Example: `reth-bench-compare --baseline-ref main --feature-ref pr/123 -- --debug.tip 0xabc...`
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub reth_args: Vec<String>,
@@ -212,6 +216,21 @@ async fn validate_rpc_chain_id(rpc_url: &str, expected_chain: &Chain) -> Result<
     Ok(())
 }
 
+/// Create a client instance based on the selected client type
+fn create_client(args: &Args, git_manager: GitManager) -> Result<Box<dyn EthereumClient>> {
+    match args.client.as_str() {
+        "reth" => {
+            let client = RethClient::new(args, git_manager)?;
+            Ok(Box::new(client))
+        }
+        "geth" => {
+            let client = GethClient::new(args, git_manager)?;
+            Ok(Box::new(client))
+        }
+        _ => Err(eyre!("Unsupported client: {}. Supported clients: reth, geth", args.client)),
+    }
+}
+
 /// Main comparison workflow execution
 pub async fn run_comparison(args: Args, _ctx: CliContext) -> Result<()> {
     // Create a new process group for this process and all its children
@@ -224,12 +243,12 @@ pub async fn run_comparison(args: Args, _ctx: CliContext) -> Result<()> {
     }
 
     info!(
-        "Starting benchmark comparison between '{}' and '{}'",
-        args.baseline_ref, args.feature_ref
+        "Starting benchmark comparison between '{}' and '{}' using {} client",
+        args.baseline_ref, args.feature_ref, args.client
     );
 
     if args.sudo {
-        info!("Running in sudo mode - reth commands will use elevated privileges");
+        info!("Running in sudo mode - client commands will use elevated privileges");
     }
 
     // Initialize Git manager
@@ -237,15 +256,8 @@ pub async fn run_comparison(args: Args, _ctx: CliContext) -> Result<()> {
     // Fetch all branches, tags, and commits
     git_manager.fetch_all()?;
 
-    // Initialize compilation manager
-    let output_dir = args.output_dir_path();
-    let compilation_manager = CompilationManager::new(
-        git_manager.repo_root().to_string(),
-        output_dir.clone(),
-        git_manager.clone(),
-    )?;
-    // Initialize node manager
-    let mut node_manager = NodeManager::new(&args);
+    // Create client instance
+    let mut client = create_client(&args, git_manager.clone())?;
 
     let benchmark_runner = BenchmarkRunner::new(&args);
     let mut comparison_generator = ComparisonGenerator::new(&args);
@@ -298,8 +310,7 @@ pub async fn run_comparison(args: Args, _ctx: CliContext) -> Result<()> {
 
     let result = run_benchmark_workflow(
         &git_manager,
-        &compilation_manager,
-        &mut node_manager,
+        &mut client,
         &benchmark_runner,
         &mut comparison_generator,
         &args,
@@ -327,17 +338,10 @@ fn parse_args_string(args_str: &str) -> Vec<String> {
 /// Run compilation phase for both baseline and feature binaries
 async fn run_compilation_phase(
     git_manager: &GitManager,
-    compilation_manager: &CompilationManager,
+    client: &dyn EthereumClient,
     args: &Args,
-    is_optimism: bool,
 ) -> Result<(String, String)> {
-    info!("=== Running compilation phase ===");
-    
-    // Ensure required tools are available (only need to check once)
-    compilation_manager.ensure_reth_bench_available()?;
-    if args.profile {
-        compilation_manager.ensure_samply_available()?;
-    }
+    info!("=== Running compilation phase for {} ===", client.client_name());
     
     let refs = [&args.baseline_ref, &args.feature_ref];
     let ref_types = ["baseline", "feature"];
@@ -359,13 +363,13 @@ async fn run_compilation_phase(
         let ref_type = ref_types[i];
         let commit = &ref_commits[git_ref];
         
-        info!("Compiling {} binary for reference: {} (commit: {})", ref_type, git_ref, &commit[..8]);
+        info!("Compiling {} {} binary for reference: {} (commit: {})", client.client_name(), ref_type, git_ref, &commit[..8]);
         
         // Switch to target reference
         git_manager.switch_ref(git_ref)?;
         
-        // Compile reth (with caching)
-        compilation_manager.compile_reth(commit, is_optimism)?;
+        // Compile client (with caching)
+        client.compile(git_ref, commit).await?;
         
         info!("Completed compilation for {} reference", ref_type);
     }
@@ -380,11 +384,9 @@ async fn run_compilation_phase(
 /// Run warmup phase to warm up caches before benchmarking
 async fn run_warmup_phase(
     git_manager: &GitManager,
-    compilation_manager: &CompilationManager,
-    node_manager: &mut NodeManager,
+    client: &mut dyn EthereumClient,
     benchmark_runner: &BenchmarkRunner,
     args: &Args,
-    is_optimism: bool,
     baseline_commit: &str,
 ) -> Result<()> {
     info!("=== Running warmup phase ===");
@@ -396,7 +398,7 @@ async fn run_warmup_phase(
     git_manager.switch_ref(warmup_ref)?;
     
     // Get the cached binary path for baseline (should already be compiled)
-    let binary_path = compilation_manager.get_cached_binary_path_for_commit(baseline_commit, is_optimism);
+    let binary_path = client.get_cached_binary_path(baseline_commit);
     
     // Verify the cached binary exists
     if !binary_path.exists() {
@@ -411,11 +413,11 @@ async fn run_warmup_phase(
     // Get baseline additional arguments for warmup
     let additional_args = args.baseline_args.as_ref().map(|s| parse_args_string(s)).unwrap_or_default();
     
-    // Start reth node for warmup
-    let mut node_process = node_manager.start_node(&binary_path, warmup_ref, "warmup", &additional_args).await?;
+    // Start client node for warmup
+    let mut node_process = client.start_node(&binary_path, warmup_ref, "warmup", &additional_args).await?;
     
     // Wait for node to be ready and get its current tip
-    let current_tip = node_manager.wait_for_node_ready_and_get_tip().await?;
+    let current_tip = client.wait_for_ready().await?;
     info!("Warmup node is ready at tip: {}", current_tip);
     
     // Store the tip we'll unwind back to
@@ -430,10 +432,10 @@ async fn run_warmup_phase(
         .await?;
     
     // Stop node before unwinding (node must be stopped to release database lock)
-    node_manager.stop_node(&mut node_process).await?;
+    client.stop_node(&mut node_process).await?;
     
     // Unwind back to starting block after warmup
-    node_manager.unwind_to_block(original_tip).await?;
+    client.unwind_to_block(original_tip).await?;
     
     info!("Warmup phase completed");
     Ok(())
@@ -442,21 +444,16 @@ async fn run_warmup_phase(
 /// Execute the complete benchmark workflow for both branches
 async fn run_benchmark_workflow(
     git_manager: &GitManager,
-    compilation_manager: &CompilationManager,
-    node_manager: &mut NodeManager,
+    client: &mut Box<dyn EthereumClient>,
     benchmark_runner: &BenchmarkRunner,
     comparison_generator: &mut ComparisonGenerator,
     args: &Args,
 ) -> Result<()> {
-    // Detect if this is an Optimism chain once at the beginning
-    let rpc_url = args.get_rpc_url();
-    let is_optimism = compilation_manager.detect_optimism_chain(&rpc_url).await?;
-    
     // Run compilation phase for both binaries
-    let (baseline_commit, feature_commit) = run_compilation_phase(git_manager, compilation_manager, args, is_optimism).await?;
+    let (baseline_commit, feature_commit) = run_compilation_phase(git_manager, &**client, args).await?;
     
-    // Run warmup phase before benchmarking
-    run_warmup_phase(git_manager, compilation_manager, node_manager, benchmark_runner, args, is_optimism, &baseline_commit).await?;
+    // Run warmup phase before benchmarking  
+    run_warmup_phase(git_manager, &mut **client, benchmark_runner, args, &baseline_commit).await?;
     
     let refs = [&args.baseline_ref, &args.feature_ref];
     let ref_types = ["baseline", "feature"];
@@ -471,7 +468,7 @@ async fn run_benchmark_workflow(
         git_manager.switch_ref(git_ref)?;
 
         // Get the cached binary path for this git reference (should already be compiled)
-        let binary_path = compilation_manager.get_cached_binary_path_for_commit(commit, is_optimism);
+        let binary_path = client.get_cached_binary_path(commit);
         
         // Verify the cached binary exists
         if !binary_path.exists() {
@@ -490,11 +487,11 @@ async fn run_benchmark_workflow(
             _ => Vec::new(),
         };
 
-        // Start reth node
-        let mut node_process = node_manager.start_node(&binary_path, git_ref, ref_type, &additional_args).await?;
+        // Start client node
+        let mut node_process = client.start_node(&binary_path, git_ref, ref_type, &additional_args).await?;
 
         // Wait for node to be ready and get its current tip (wherever it is)
-        let current_tip = node_manager.wait_for_node_ready_and_get_tip().await?;
+        let current_tip = client.wait_for_ready().await?;
         info!("Node is ready at tip: {}", current_tip);
 
         // Store the tip we'll unwind back to
@@ -521,10 +518,10 @@ async fn run_benchmark_workflow(
         let benchmark_end = chrono::Utc::now();
 
         // Stop node
-        node_manager.stop_node(&mut node_process).await?;
+        client.stop_node(&mut node_process).await?;
 
         // Unwind back to original tip
-        node_manager.unwind_to_block(original_tip).await?;
+        client.unwind_to_block(original_tip).await?;
 
         // Store results for comparison
         comparison_generator.add_ref_results(ref_type, &output_dir)?;
@@ -543,9 +540,9 @@ async fn run_benchmark_workflow(
         generate_comparison_charts(comparison_generator, args).await?;
     }
 
-    // Start samply servers if profiling was enabled
+    // Profiling support temporarily disabled in client abstraction
     if args.profile {
-        start_samply_servers(args).await?;
+        warn!("Profiling support is temporarily disabled in the client abstraction layer");
     }
 
     Ok(())

@@ -16,7 +16,7 @@ use tokio::{
     process::{Child, Command},
     time::{sleep, timeout},
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Reth client implementation
 pub struct RethClient {
