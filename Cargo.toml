@@ -18,6 +18,9 @@ path = "src/main.rs"
 clap = { version = "4", features = ["derive", "env"] }
 eyre = "0.6"
 
+# Async traits
+async-trait = "0.1"
+
 # Async runtime
 tokio = { version = "1.44.2", features = ["full"] }
 tracing = "0.1.0"

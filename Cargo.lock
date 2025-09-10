@@ -4462,6 +4462,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types-eth",
+ "async-trait",
  "chrono",
  "clap",
  "csv",
