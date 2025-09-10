@@ -108,7 +108,7 @@ impl GethClient {
             "--http.port".to_string(),
             "8545".to_string(),
             "--http.api".to_string(),
-            "eth".to_string(),
+            "eth,debug".to_string(), // Enable debug API for debug_setHead
             
             // Sync and networking
             "--syncmode".to_string(),
@@ -459,12 +459,31 @@ impl EthereumClient for GethClient {
     }
 
     async fn unwind_to_block(&self, block_number: u64) -> Result<()> {
-        // Geth doesn't have the same "stage unwind" command as reth
-        // Instead, we can use geth removedb and resync, but that's more destructive
-        // For now, let's return an informational message
-        warn!("Geth doesn't support unwinding to specific blocks like reth");
-        warn!("Consider stopping the node and restarting from a clean state if needed");
-        info!("Requested unwind to block: {} (skipped for geth)", block_number);
+        info!("Unwinding geth node to block: {} using debug_setHead", block_number);
+
+        // Geth uses debug_setHead API to rewind to a specific block
+        // This needs to be called when the node is running
+        let rpc_url = "http://localhost:8545";
+
+        // Create Alloy provider
+        let url = rpc_url
+            .parse()
+            .map_err(|e| eyre!("Invalid RPC URL '{}': {}", rpc_url, e))?;
+        let provider = ProviderBuilder::new().connect_http(url);
+
+        // Convert block number to hex format (required by debug_setHead)
+        let hex_block = format!("0x{:x}", block_number);
+
+        // Send the raw RPC request using debug_setHead
+        let response: serde_json::Value = provider
+            .client()
+            .request("debug_setHead", [hex_block.as_str()])
+            .await
+            .wrap_err("Failed to call debug_setHead on geth node")?;
+
+        debug!("debug_setHead response: {:?}", response);
+        
+        info!("Successfully unwound geth node to block: {}", block_number);
         Ok(())
     }
 
