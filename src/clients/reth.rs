@@ -510,4 +510,8 @@ impl EthereumClient for RethClient {
     fn client_name(&self) -> &'static str {
         "reth"
     }
+
+    fn requires_node_for_unwind(&self) -> bool {
+        false // Reth uses offline stage unwind command
+    }
 }

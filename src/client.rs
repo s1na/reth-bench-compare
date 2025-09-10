@@ -28,6 +28,9 @@ pub trait EthereumClient: Send + Sync {
     async fn stop_node(&self, child: &mut Child) -> Result<()>;
 
     /// Unwind the node to a specific block number
+    /// Note: Different clients have different requirements:
+    /// - Reth: Requires node to be stopped (uses offline stage unwind command)  
+    /// - Geth: Requires node to be running (uses debug_setHead RPC call)
     async fn unwind_to_block(&self, block_number: u64) -> Result<()>;
 
     /// Get the cached binary path for a given commit
@@ -35,4 +38,7 @@ pub trait EthereumClient: Send + Sync {
 
     /// Get the client name (e.g., "reth", "geth")
     fn client_name(&self) -> &'static str;
+
+    /// Returns true if this client requires the node to be running for unwind operations
+    fn requires_node_for_unwind(&self) -> bool;
 }

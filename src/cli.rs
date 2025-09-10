@@ -431,11 +431,16 @@ async fn run_warmup_phase(
         .run_warmup(current_tip)
         .await?;
     
-    // Stop node before unwinding (node must be stopped to release database lock)
-    client.stop_node(&mut node_process).await?;
-    
-    // Unwind back to starting block after warmup
-    client.unwind_to_block(original_tip).await?;
+    // Handle unwind semantics based on client requirements
+    if client.requires_node_for_unwind() {
+        // For clients like geth: unwind while node is running, then stop
+        client.unwind_to_block(original_tip).await?;
+        client.stop_node(&mut node_process).await?;
+    } else {
+        // For clients like reth: stop node first, then unwind offline
+        client.stop_node(&mut node_process).await?;
+        client.unwind_to_block(original_tip).await?;
+    }
     
     info!("Warmup phase completed");
     Ok(())
@@ -517,11 +522,16 @@ async fn run_benchmark_workflow(
         // Capture end timestamp for the benchmark run
         let benchmark_end = chrono::Utc::now();
 
-        // Stop node
-        client.stop_node(&mut node_process).await?;
-
-        // Unwind back to original tip
-        client.unwind_to_block(original_tip).await?;
+        // Handle unwind semantics based on client requirements
+        if client.requires_node_for_unwind() {
+            // For clients like geth: unwind while node is running, then stop
+            client.unwind_to_block(original_tip).await?;
+            client.stop_node(&mut node_process).await?;
+        } else {
+            // For clients like reth: stop node first, then unwind offline
+            client.stop_node(&mut node_process).await?;
+            client.unwind_to_block(original_tip).await?;
+        }
 
         // Store results for comparison
         comparison_generator.add_ref_results(ref_type, &output_dir)?;

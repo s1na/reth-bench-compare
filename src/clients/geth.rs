@@ -496,4 +496,8 @@ impl EthereumClient for GethClient {
     fn client_name(&self) -> &'static str {
         "geth"
     }
+
+    fn requires_node_for_unwind(&self) -> bool {
+        true // Geth uses debug_setHead RPC which requires running node
+    }
 }
