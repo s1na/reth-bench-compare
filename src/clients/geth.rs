@@ -114,6 +114,8 @@ impl GethClient {
             "--syncmode".to_string(),
             "snap".to_string(), // Fast sync mode
             "--nodiscover".to_string(), // Disable peer discovery like reth's --disable-discovery
+            "--maxpeers".to_string(),
+            "0".to_string(),
         ]);
 
         // Add any additional arguments passed via command line
