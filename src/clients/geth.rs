@@ -109,11 +109,16 @@ impl GethClient {
             "8545".to_string(),
             "--http.api".to_string(),
             "eth,debug".to_string(), // Enable debug API for debug_setHead
-            
+
             // Sync and networking
             "--nodiscover".to_string(), // Disable peer discovery like reth's --disable-discovery
             "--maxpeers".to_string(),
             "0".to_string(),
+
+            // Disable history storage for performance
+            "--history.transactions".to_string(),
+            "0".to_string(),
+            "--history.logs.disable".to_string(),
         ]);
 
         // Add any additional arguments passed via command line
