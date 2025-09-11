@@ -356,9 +356,25 @@ impl EthereumClient for GethClient {
                             SyncStatus::Info(sync_info)
                                 if sync_info.current_block != sync_info.highest_block =>
                             {
-                                debug!("Geth node is still syncing {sync_info:?}, waiting...");
+                                info!("Geth node is still syncing: current_block={}, highest_block={}, waiting...", 
+                                      sync_info.current_block, sync_info.highest_block);
                             }
-                            _ => {
+                            SyncStatus::Info(sync_info) => {
+                                info!("Geth node sync status: current_block={}, highest_block={} (synced)", 
+                                      sync_info.current_block, sync_info.highest_block);
+                                // Node is synced, now get the tip
+                                match provider.get_block_number().await {
+                                    Ok(tip) => {
+                                        info!("Geth node is ready and not syncing at block: {}", tip);
+                                        return Ok(tip);
+                                    }
+                                    Err(e) => {
+                                        info!("Failed to get block number: {}", e);
+                                    }
+                                }
+                            }
+                            SyncStatus::None => {
+                                info!("Geth node is not syncing (SyncStatus::None)");
                                 // Node is not syncing, now get the tip
                                 match provider.get_block_number().await {
                                     Ok(tip) => {
@@ -366,14 +382,14 @@ impl EthereumClient for GethClient {
                                         return Ok(tip);
                                     }
                                     Err(e) => {
-                                        debug!("Failed to get block number: {}", e);
+                                        info!("Failed to get block number: {}", e);
                                     }
                                 }
                             }
                         }
                     }
                     Err(e) => {
-                        debug!("Geth node RPC not ready yet or failed to check sync status: {}", e);
+                        info!("Geth node RPC not ready yet or failed to check sync status: {}", e);
                     }
                 }
 
