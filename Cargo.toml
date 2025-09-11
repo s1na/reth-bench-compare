@@ -47,11 +47,11 @@ rand = "0.8"
 hex = "0.4"
 
 # Reth dependencies for shared types and utilities
-reth-tracing = { git = "https://github.com/paradigmxyz/reth.git", rev = "dddde9eff9" }
-reth-cli-runner = { git = "https://github.com/paradigmxyz/reth.git", rev = "dddde9eff9" }
-reth-node-core = { git = "https://github.com/paradigmxyz/reth.git", rev = "dddde9eff9" }
-reth-cli-util = { git = "https://github.com/paradigmxyz/reth.git", rev = "dddde9eff9" }
-reth-chainspec = { git = "https://github.com/paradigmxyz/reth.git", rev = "dddde9eff9" }
+reth-tracing = { git = "https://github.com/s1na/reth.git", branch = "bench/npv4" }
+reth-cli-runner = { git = "https://github.com/s1na/reth.git", branch = "bench/npv4" }
+reth-node-core = { git = "https://github.com/s1na/reth.git", branch = "bench/npv4" }
+reth-cli-util = { git = "https://github.com/s1na/reth.git", branch = "bench/npv4" }
+reth-chainspec = { git = "https://github.com/s1na/reth.git", branch = "bench/npv4" }
 
 # Alloy for RPC communication
 alloy-provider = { version = "1.0.17", default-features = false, features = ["reqwest", "reqwest-rustls-tls"] }
