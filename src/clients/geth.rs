@@ -111,8 +111,6 @@ impl GethClient {
             "eth,debug".to_string(), // Enable debug API for debug_setHead
             
             // Sync and networking
-            "--syncmode".to_string(),
-            "snap".to_string(), // Fast sync mode
             "--nodiscover".to_string(), // Disable peer discovery like reth's --disable-discovery
             "--maxpeers".to_string(),
             "0".to_string(),
