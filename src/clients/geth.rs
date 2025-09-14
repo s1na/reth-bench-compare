@@ -320,18 +320,18 @@ impl EthereumClient for GethClient {
         let check_interval = Duration::from_secs(2);
         let rpc_url = "http://localhost:8545";
 
-        // Create Alloy provider
-        info!("Parsing RPC URL: {}", rpc_url);
-        let url = rpc_url
-            .parse()
-            .map_err(|e| eyre!("Invalid RPC URL '{}': {}", rpc_url, e))?;
-        info!("Creating Alloy provider...");
-        let provider = ProviderBuilder::new().connect_http(url);
-        info!("Provider created");
-
         info!("Starting timeout block with max_wait: {:?}", max_wait);
-        let result = timeout(max_wait, async {
+        let result = timeout(max_wait, async move {
             info!("Inside timeout async block");
+            
+            // Create Alloy provider inside async block
+            info!("Parsing RPC URL: {}", rpc_url);
+            let url = rpc_url
+                .parse()
+                .map_err(|e| eyre!("Invalid RPC URL '{}': {}", rpc_url, e))?;
+            info!("Creating Alloy provider inside async block...");
+            let provider = ProviderBuilder::new().connect_http(url);
+            info!("Provider created inside async block");
             loop {
                 info!("Checking geth RPC status...");
                 // First check if RPC is up and node is not syncing
