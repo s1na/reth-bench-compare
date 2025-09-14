@@ -293,18 +293,14 @@ impl EthereumClient for GethClient {
         
         let mut cmd = self.create_direct_command(&geth_args);
 
-        // Set process group for better signal handling
-        #[cfg(unix)]
-        {
-            cmd.process_group(0);
-        }
+        // Don't set process group to avoid SIGTTOU issues when geth writes to terminal
 
         info!("Final command being executed: {:?}", cmd);
         debug!("Executing geth command: {cmd:?}");
 
         let mut child = cmd
-            .stdout(std::process::Stdio::inherit())
-            .stderr(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
             .kill_on_drop(true)
             .spawn()
             .wrap_err("Failed to start geth node")?;
@@ -315,8 +311,62 @@ impl EthereumClient for GethClient {
             binary_path_str
         );
 
-        // Using inherit mode - geth output will go directly to terminal
-        info!("Geth output will be displayed directly in terminal");
+        // Stream stdout and stderr to log files in output directory
+        if let Some(stdout) = child.stdout.take() {
+            let output_dir = self.output_dir.clone();
+            tokio::spawn(async move {
+                use tokio::fs::File;
+                use tokio::io::AsyncWriteExt;
+                let log_file_path = output_dir.join("geth_stdout.log");
+                let mut log_file = match File::create(&log_file_path).await {
+                    Ok(file) => file,
+                    Err(e) => {
+                        warn!("Failed to create geth stdout log file: {}", e);
+                        return;
+                    }
+                };
+                let reader = AsyncBufReader::new(stdout);
+                let mut lines = reader.lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    info!("[GETH-OUT] {}", line);
+                    let log_line = format!("{}\n", line);
+                    if let Err(e) = log_file.write_all(log_line.as_bytes()).await {
+                        warn!("Failed to write to geth stdout log: {}", e);
+                    }
+                }
+                if let Err(e) = log_file.flush().await {
+                    warn!("Failed to flush geth stdout log: {}", e);
+                }
+            });
+        }
+
+        if let Some(stderr) = child.stderr.take() {
+            let output_dir = self.output_dir.clone();
+            tokio::spawn(async move {
+                use tokio::fs::File;
+                use tokio::io::AsyncWriteExt;
+                let log_file_path = output_dir.join("geth_stderr.log");
+                let mut log_file = match File::create(&log_file_path).await {
+                    Ok(file) => file,
+                    Err(e) => {
+                        warn!("Failed to create geth stderr log file: {}", e);
+                        return;
+                    }
+                };
+                let reader = AsyncBufReader::new(stderr);
+                let mut lines = reader.lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    info!("[GETH-ERR] {}", line);
+                    let log_line = format!("{}\n", line);
+                    if let Err(e) = log_file.write_all(log_line.as_bytes()).await {
+                        warn!("Failed to write to geth stderr log: {}", e);
+                    }
+                }
+                if let Err(e) = log_file.flush().await {
+                    warn!("Failed to flush geth stderr log: {}", e);
+                }
+            });
+        }
 
         // Give the node a moment to start up
         sleep(Duration::from_secs(5)).await;
