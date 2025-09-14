@@ -365,8 +365,8 @@ impl EthereumClient for GethClient {
         }
 
         // Give the node a moment to start up
-        info!("Waiting 5 seconds for geth to initialize...");
-        sleep(Duration::from_secs(5)).await;
+        info!("Waiting 1 second for geth to initialize...");
+        sleep(Duration::from_secs(1)).await;
         info!("Finished waiting, geth should be ready now");
 
         Ok(child)
