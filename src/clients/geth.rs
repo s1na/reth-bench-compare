@@ -328,6 +328,7 @@ impl EthereumClient for GethClient {
 
         let result = timeout(max_wait, async {
             loop {
+                info!("Checking geth RPC status...");
                 // First check if RPC is up and node is not syncing
                 match provider.syncing().await {
                     Ok(sync_result) => {
