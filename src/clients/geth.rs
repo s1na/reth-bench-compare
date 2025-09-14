@@ -326,7 +326,9 @@ impl EthereumClient for GethClient {
             .map_err(|e| eyre!("Invalid RPC URL '{}': {}", rpc_url, e))?;
         let provider = ProviderBuilder::new().connect_http(url);
 
+        info!("Starting timeout block with max_wait: {:?}", max_wait);
         let result = timeout(max_wait, async {
+            info!("Inside timeout async block");
             loop {
                 info!("Checking geth RPC status...");
                 // First check if RPC is up and node is not syncing
