@@ -300,69 +300,12 @@ impl EthereumClient for GethClient {
             binary_path_str
         );
 
-        // Stream stdout and stderr to log files in output directory
-        info!("Setting up geth logging capture...");
-        if let Some(stdout) = child.stdout.take() {
-            info!("Got stdout stream from geth process");
-            let output_dir = self.output_dir.clone();
-            tokio::spawn(async move {
-                use tokio::fs::File;
-                use tokio::io::AsyncWriteExt;
-                let log_file_path = output_dir.join("geth_stdout.log");
-                let mut log_file = match File::create(&log_file_path).await {
-                    Ok(file) => file,
-                    Err(e) => {
-                        warn!("Failed to create geth stdout log file: {}", e);
-                        return;
-                    }
-                };
-                let reader = AsyncBufReader::new(stdout);
-                let mut lines = reader.lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    info!("[GETH-OUT] {}", line);
-                    let log_line = format!("{}\n", line);
-                    if let Err(e) = log_file.write_all(log_line.as_bytes()).await {
-                        warn!("Failed to write to geth stdout log: {}", e);
-                    }
-                }
-                if let Err(e) = log_file.flush().await {
-                    warn!("Failed to flush geth stdout log: {}", e);
-                }
-            });
-        } else {
-            info!("No stdout stream from geth process");
-        }
-
-        if let Some(stderr) = child.stderr.take() {
-            info!("Got stderr stream from geth process");
-            let output_dir = self.output_dir.clone();
-            tokio::spawn(async move {
-                use tokio::fs::File;
-                use tokio::io::AsyncWriteExt;
-                let log_file_path = output_dir.join("geth_stderr.log");
-                let mut log_file = match File::create(&log_file_path).await {
-                    Ok(file) => file,
-                    Err(e) => {
-                        warn!("Failed to create geth stderr log file: {}", e);
-                        return;
-                    }
-                };
-                let reader = AsyncBufReader::new(stderr);
-                let mut lines = reader.lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    info!("[GETH-ERR] {}", line);
-                    let log_line = format!("{}\n", line);
-                    if let Err(e) = log_file.write_all(log_line.as_bytes()).await {
-                        warn!("Failed to write to geth stderr log: {}", e);
-                    }
-                }
-                if let Err(e) = log_file.flush().await {
-                    warn!("Failed to flush geth stderr log: {}", e);
-                }
-            });
-        } else {
-            info!("No stderr stream from geth process");
-        }
+        // Temporarily disable logging capture to avoid hanging
+        info!("Skipping geth logging capture to avoid deadlock");
+        
+        // Drop the streams to prevent geth from blocking
+        drop(child.stdout.take());
+        drop(child.stderr.take());
 
         // Give the node a moment to start up
         info!("Waiting 1 second for geth to initialize...");
