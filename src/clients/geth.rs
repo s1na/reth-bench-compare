@@ -321,10 +321,13 @@ impl EthereumClient for GethClient {
         let rpc_url = "http://localhost:8545";
 
         // Create Alloy provider
+        info!("Parsing RPC URL: {}", rpc_url);
         let url = rpc_url
             .parse()
             .map_err(|e| eyre!("Invalid RPC URL '{}': {}", rpc_url, e))?;
+        info!("Creating Alloy provider...");
         let provider = ProviderBuilder::new().connect_http(url);
+        info!("Provider created");
 
         info!("Starting timeout block with max_wait: {:?}", max_wait);
         let result = timeout(max_wait, async {
