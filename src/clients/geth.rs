@@ -282,7 +282,11 @@ impl EthereumClient for GethClient {
         
         let mut cmd = self.create_direct_command(&geth_args);
 
-        // Don't set process group to avoid SIGTTOU issues when geth writes to terminal
+        // Set process group for better signal handling
+        #[cfg(unix)]
+        {
+            cmd.process_group(0);
+        }
 
         info!("Final command being executed: {:?}", cmd);
         debug!("Executing geth command: {cmd:?}");
@@ -300,15 +304,41 @@ impl EthereumClient for GethClient {
             binary_path_str
         );
 
-        // Temporarily disable logging capture to avoid hanging
-        info!("Skipping geth logging capture to avoid deadlock");
-        
-        // Drop the streams to prevent geth from blocking
-        drop(child.stdout.take());
-        drop(child.stderr.take());
+        // Stream stdout and stderr with prefixes at debug level
+        if let Some(stdout) = child.stdout.take() {
+            info!("Setting up geth stdout streaming task");
+            tokio::spawn(async move {
+                info!("Geth stdout streaming task started");
+                let reader = AsyncBufReader::new(stdout);
+                let mut lines = reader.lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    debug!("[GETH] {}", line);
+                }
+                info!("Geth stdout streaming task ended");
+            });
+        } else {
+            warn!("No stdout handle available for geth");
+        }
 
-        // Skip the sleep entirely to test if the function can return
-        info!("Skipping sleep - returning immediately");
+        if let Some(stderr) = child.stderr.take() {
+            info!("Setting up geth stderr streaming task");
+            tokio::spawn(async move {
+                info!("Geth stderr streaming task started");
+                let reader = AsyncBufReader::new(stderr);
+                let mut lines = reader.lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    debug!("[GETH] {}", line);
+                }
+                info!("Geth stderr streaming task ended");
+            });
+        } else {
+            warn!("No stderr handle available for geth");
+        }
+
+        // Give the node more time to start up
+        info!("Waiting for geth to initialize...");
+        sleep(Duration::from_secs(15)).await;
+        info!("Finished waiting for geth initialization");
 
         Ok(child)
     }
@@ -320,34 +350,42 @@ impl EthereumClient for GethClient {
         let check_interval = Duration::from_secs(2);
         let rpc_url = "http://localhost:8545";
 
+        // Create Alloy provider outside the timeout block
+        info!("Parsing RPC URL: {}", rpc_url);
+        let url = rpc_url
+            .parse()
+            .map_err(|e| eyre!("Invalid RPC URL '{}': {}", rpc_url, e))?;
+        info!("Creating Alloy provider...");
+        let provider = ProviderBuilder::new().connect_http(url);
+        info!("Provider created successfully");
+
         info!("Starting timeout block with max_wait: {:?}", max_wait);
-        let result = timeout(max_wait, async move {
+        let start_time = std::time::Instant::now();
+        let result = timeout(max_wait, async {
             info!("Inside timeout async block");
-            
-            // Create Alloy provider inside async block
-            info!("Parsing RPC URL: {}", rpc_url);
-            let url = rpc_url
-                .parse()
-                .map_err(|e| eyre!("Invalid RPC URL '{}': {}", rpc_url, e))?;
-            info!("Creating Alloy provider inside async block...");
-            let provider = ProviderBuilder::new().connect_http(url);
-            info!("Provider created inside async block");
+            let mut iteration = 0;
             loop {
-                info!("Checking geth RPC status...");
+                iteration += 1;
+                let elapsed = start_time.elapsed();
+                info!("Checking geth RPC status... (iteration #{}, elapsed: {:?})", iteration, elapsed);
+
                 // First check if RPC is up and node is not syncing
+                info!("Calling provider.syncing()...");
                 match provider.syncing().await {
                     Ok(sync_result) => {
+                        info!("Successfully got sync result: {:?}", sync_result);
                         match sync_result {
                             SyncStatus::Info(sync_info)
                                 if sync_info.current_block != sync_info.highest_block =>
                             {
-                                info!("Geth node is still syncing: current_block={}, highest_block={}, waiting...", 
+                                info!("Geth node is still syncing: current_block={}, highest_block={}, waiting...",
                                       sync_info.current_block, sync_info.highest_block);
                             }
                             SyncStatus::Info(sync_info) => {
-                                info!("Geth node sync status: current_block={}, highest_block={} (synced)", 
+                                info!("Geth node sync status: current_block={}, highest_block={} (synced)",
                                       sync_info.current_block, sync_info.highest_block);
                                 // Node is synced, now get the tip
+                                info!("Node is synced, getting block number...");
                                 match provider.get_block_number().await {
                                     Ok(tip) => {
                                         info!("Geth node is ready and not syncing at block: {}", tip);
@@ -361,6 +399,7 @@ impl EthereumClient for GethClient {
                             SyncStatus::None => {
                                 info!("Geth node is not syncing (SyncStatus::None)");
                                 // Node is not syncing, now get the tip
+                                info!("Node not syncing, getting block number...");
                                 match provider.get_block_number().await {
                                     Ok(tip) => {
                                         info!("Geth node is ready and not syncing at block: {}", tip);
@@ -378,12 +417,15 @@ impl EthereumClient for GethClient {
                     }
                 }
 
+                info!("Sleeping for {:?} before next check...", check_interval);
                 sleep(check_interval).await;
+                info!("Sleep completed, continuing loop...");
             }
         })
         .await
         .wrap_err("Timed out waiting for geth node to be ready and synced")?;
 
+        info!("Successfully exited timeout block, total elapsed: {:?}", start_time.elapsed());
         result
     }
 
