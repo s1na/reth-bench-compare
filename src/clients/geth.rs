@@ -91,22 +91,11 @@ impl GethClient {
 
         // Geth-specific arguments for engine API and RPC
         geth_args.extend_from_slice(&[
-            // Engine API (auth RPC)
-            "--authrpc.addr".to_string(),
-            "localhost".to_string(),
-            "--authrpc.port".to_string(),
-            "8551".to_string(),
-            "--authrpc.vhosts".to_string(),
-            "localhost".to_string(),
             "--authrpc.jwtsecret".to_string(),
             self.get_jwt_secret_path().to_string_lossy().to_string(),
             
             // Regular JSON-RPC (for sync status checks)
             "--http".to_string(),
-            "--http.addr".to_string(),
-            "localhost".to_string(),
-            "--http.port".to_string(),
-            "8545".to_string(),
             "--http.api".to_string(),
             "eth,debug".to_string(), // Enable debug API for debug_setHead
 
