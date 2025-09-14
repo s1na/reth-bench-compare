@@ -301,7 +301,9 @@ impl EthereumClient for GethClient {
         );
 
         // Stream stdout and stderr to log files in output directory
+        info!("Setting up geth logging capture...");
         if let Some(stdout) = child.stdout.take() {
+            info!("Got stdout stream from geth process");
             let output_dir = self.output_dir.clone();
             tokio::spawn(async move {
                 use tokio::fs::File;
@@ -327,9 +329,12 @@ impl EthereumClient for GethClient {
                     warn!("Failed to flush geth stdout log: {}", e);
                 }
             });
+        } else {
+            info!("No stdout stream from geth process");
         }
 
         if let Some(stderr) = child.stderr.take() {
+            info!("Got stderr stream from geth process");
             let output_dir = self.output_dir.clone();
             tokio::spawn(async move {
                 use tokio::fs::File;
@@ -355,6 +360,8 @@ impl EthereumClient for GethClient {
                     warn!("Failed to flush geth stderr log: {}", e);
                 }
             });
+        } else {
+            info!("No stderr stream from geth process");
         }
 
         // Give the node a moment to start up
