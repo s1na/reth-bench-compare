@@ -292,6 +292,7 @@ impl EthereumClient for GethClient {
         debug!("Executing geth command: {cmd:?}");
 
         let mut child = cmd
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true)
