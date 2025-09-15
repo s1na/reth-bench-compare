@@ -85,6 +85,10 @@ pub struct Args {
     #[arg(long)]
     pub draw: bool,
 
+    /// Path to Python chart generation script (optional, uses default if not specified)
+    #[arg(long, value_name = "PATH")]
+    pub chart_script: Option<String>,
+
     /// Enable CPU profiling with samply during benchmark runs
     #[arg(long)]
     pub profile: bool,
@@ -593,7 +597,7 @@ async fn run_benchmark_workflow(
 /// Generate comparison charts using the Python script
 async fn generate_comparison_charts(
     comparison_generator: &ComparisonGenerator,
-    _args: &Args,
+    args: &Args,
 ) -> Result<()> {
     info!("Generating comparison charts with Python script...");
 
@@ -614,7 +618,8 @@ async fn generate_comparison_charts(
     let output_dir = comparison_generator.get_output_dir();
     let chart_output = output_dir.join("latency_comparison.png");
 
-    let script_path = "bin/reth-bench/scripts/compare_newpayload_latency.py";
+    let script_path = args.chart_script.as_deref()
+        .unwrap_or("bin/reth-bench/scripts/compare_newpayload_latency.py");
 
     info!("Running Python comparison script with uv...");
     let mut cmd = Command::new("uv");
