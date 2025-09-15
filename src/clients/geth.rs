@@ -341,6 +341,22 @@ impl EthereumClient for GethClient {
         sleep(Duration::from_secs(15)).await;
         info!("Finished waiting for geth initialization");
 
+        // Check if the process is still alive
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return Err(eyre!(
+                    "Geth process exited during initialization with status: {:?}. This suggests geth failed to start properly.",
+                    status
+                ));
+            }
+            Ok(None) => {
+                info!("Geth process is still running after initialization");
+            }
+            Err(e) => {
+                return Err(eyre!("Failed to check geth process status: {}", e));
+            }
+        }
+
         Ok(child)
     }
 
@@ -541,5 +557,9 @@ impl EthereumClient for GethClient {
 
     fn requires_node_for_unwind(&self) -> bool {
         true // Geth uses debug_setHead RPC which requires running node
+    }
+
+    fn get_jwt_secret_path(&self) -> PathBuf {
+        self.get_jwt_secret_path()
     }
 }

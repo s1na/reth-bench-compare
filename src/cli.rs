@@ -259,7 +259,7 @@ pub async fn run_comparison(args: Args, _ctx: CliContext) -> Result<()> {
     // Create client instance
     let mut client = create_client(&args, git_manager.clone())?;
 
-    let benchmark_runner = BenchmarkRunner::new(&args);
+    let benchmark_runner = BenchmarkRunner::new_with_jwt_path(&args, &client.get_jwt_secret_path());
     let mut comparison_generator = ComparisonGenerator::new(&args);
 
     // Store original git state for restoration
@@ -415,7 +415,23 @@ async fn run_warmup_phase(
     
     // Start client node for warmup
     let mut node_process = client.start_node(&binary_path, warmup_ref, "warmup", &additional_args).await?;
-    
+
+    // Check if the process is still alive before proceeding
+    match node_process.try_wait() {
+        Ok(Some(status)) => {
+            return Err(eyre!(
+                "Node process exited during startup with status: {:?}. Check logs for details.",
+                status
+            ));
+        }
+        Ok(None) => {
+            info!("Node process is running, proceeding to readiness check");
+        }
+        Err(e) => {
+            return Err(eyre!("Failed to check node process status: {}", e));
+        }
+    }
+
     // Wait for node to be ready and get its current tip
     let current_tip = client.wait_for_ready().await?;
     info!("Warmup node is ready at tip: {}", current_tip);
@@ -494,6 +510,22 @@ async fn run_benchmark_workflow(
 
         // Start client node
         let mut node_process = client.start_node(&binary_path, git_ref, ref_type, &additional_args).await?;
+
+        // Check if the process is still alive before proceeding
+        match node_process.try_wait() {
+            Ok(Some(status)) => {
+                return Err(eyre!(
+                    "Node process exited during startup with status: {:?}. Check logs for details.",
+                    status
+                ));
+            }
+            Ok(None) => {
+                info!("Node process is running, proceeding to readiness check");
+            }
+            Err(e) => {
+                return Err(eyre!("Failed to check node process status: {}", e));
+            }
+        }
 
         // Wait for node to be ready and get its current tip (wherever it is)
         let current_tip = client.wait_for_ready().await?;

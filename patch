@@ -1,0 +1,294 @@
+diff --git a/src/benchmark.rs b/src/benchmark.rs
+index 455f142..3f582c3 100644
+--- a/src/benchmark.rs
++++ b/src/benchmark.rs
+@@ -31,6 +31,16 @@ impl BenchmarkRunner {
+         }
+     }
+ 
++    /// Create a new BenchmarkRunner with a specific JWT secret path
++    pub fn new_with_jwt_path(args: &Args, jwt_secret_path: &std::path::Path) -> Self {
++        Self {
++            rpc_url: args.get_rpc_url(),
++            jwt_secret: jwt_secret_path.to_string_lossy().to_string(),
++            wait_time: args.wait_time.clone(),
++            warmup_blocks: args.get_warmup_blocks(),
++        }
++    }
++
+     /// Clear filesystem caches (page cache, dentries, and inodes)
+     pub async fn clear_fs_caches() -> Result<()> {
+         info!("Clearing filesystem caches...");
+diff --git a/src/cli.rs b/src/cli.rs
+index c12b024..05006f3 100644
+--- a/src/cli.rs
++++ b/src/cli.rs
+@@ -259,7 +259,7 @@ pub async fn run_comparison(args: Args, _ctx: CliContext) -> Result<()> {
+     // Create client instance
+     let mut client = create_client(&args, git_manager.clone())?;
+ 
+-    let benchmark_runner = BenchmarkRunner::new(&args);
++    let benchmark_runner = BenchmarkRunner::new_with_jwt_path(&args, &client.get_jwt_secret_path());
+     let mut comparison_generator = ComparisonGenerator::new(&args);
+ 
+     // Store original git state for restoration
+@@ -415,7 +415,23 @@ async fn run_warmup_phase(
+     
+     // Start client node for warmup
+     let mut node_process = client.start_node(&binary_path, warmup_ref, "warmup", &additional_args).await?;
+-    
++
++    // Check if the process is still alive before proceeding
++    match node_process.try_wait() {
++        Ok(Some(status)) => {
++            return Err(eyre!(
++                "Node process exited during startup with status: {:?}. Check logs for details.",
++                status
++            ));
++        }
++        Ok(None) => {
++            info!("Node process is running, proceeding to readiness check");
++        }
++        Err(e) => {
++            return Err(eyre!("Failed to check node process status: {}", e));
++        }
++    }
++
+     // Wait for node to be ready and get its current tip
+     let current_tip = client.wait_for_ready().await?;
+     info!("Warmup node is ready at tip: {}", current_tip);
+@@ -495,6 +511,22 @@ async fn run_benchmark_workflow(
+         // Start client node
+         let mut node_process = client.start_node(&binary_path, git_ref, ref_type, &additional_args).await?;
+ 
++        // Check if the process is still alive before proceeding
++        match node_process.try_wait() {
++            Ok(Some(status)) => {
++                return Err(eyre!(
++                    "Node process exited during startup with status: {:?}. Check logs for details.",
++                    status
++                ));
++            }
++            Ok(None) => {
++                info!("Node process is running, proceeding to readiness check");
++            }
++            Err(e) => {
++                return Err(eyre!("Failed to check node process status: {}", e));
++            }
++        }
++
+         // Wait for node to be ready and get its current tip (wherever it is)
+         let current_tip = client.wait_for_ready().await?;
+         info!("Node is ready at tip: {}", current_tip);
+diff --git a/src/client.rs b/src/client.rs
+index 3c72e53..4819f70 100644
+--- a/src/client.rs
++++ b/src/client.rs
+@@ -41,4 +41,7 @@ pub trait EthereumClient: Send + Sync {
+ 
+     /// Returns true if this client requires the node to be running for unwind operations
+     fn requires_node_for_unwind(&self) -> bool;
++
++    /// Get the JWT secret path for this client
++    fn get_jwt_secret_path(&self) -> PathBuf;
+ }
+\ No newline at end of file
+diff --git a/src/clients/geth.rs b/src/clients/geth.rs
+index 341dc42..26ebba7 100644
+--- a/src/clients/geth.rs
++++ b/src/clients/geth.rs
+@@ -282,12 +282,17 @@ impl EthereumClient for GethClient {
+         
+         let mut cmd = self.create_direct_command(&geth_args);
+ 
+-        // Don't set process group to avoid SIGTTOU issues when geth writes to terminal
++        // Set process group for better signal handling
++        #[cfg(unix)]
++        {
++            cmd.process_group(0);
++        }
+ 
+         info!("Final command being executed: {:?}", cmd);
+         debug!("Executing geth command: {cmd:?}");
+ 
+         let mut child = cmd
++            .stdin(std::process::Stdio::null())
+             .stdout(std::process::Stdio::piped())
+             .stderr(std::process::Stdio::piped())
+             .kill_on_drop(true)
+@@ -300,15 +305,57 @@ impl EthereumClient for GethClient {
+             binary_path_str
+         );
+ 
+-        // Temporarily disable logging capture to avoid hanging
+-        info!("Skipping geth logging capture to avoid deadlock");
+-        
+-        // Drop the streams to prevent geth from blocking
+-        drop(child.stdout.take());
+-        drop(child.stderr.take());
++        // Stream stdout and stderr with prefixes at debug level
++        if let Some(stdout) = child.stdout.take() {
++            info!("Setting up geth stdout streaming task");
++            tokio::spawn(async move {
++                info!("Geth stdout streaming task started");
++                let reader = AsyncBufReader::new(stdout);
++                let mut lines = reader.lines();
++                while let Ok(Some(line)) = lines.next_line().await {
++                    debug!("[GETH] {}", line);
++                }
++                info!("Geth stdout streaming task ended");
++            });
++        } else {
++            warn!("No stdout handle available for geth");
++        }
++
++        if let Some(stderr) = child.stderr.take() {
++            info!("Setting up geth stderr streaming task");
++            tokio::spawn(async move {
++                info!("Geth stderr streaming task started");
++                let reader = AsyncBufReader::new(stderr);
++                let mut lines = reader.lines();
++                while let Ok(Some(line)) = lines.next_line().await {
++                    debug!("[GETH] {}", line);
++                }
++                info!("Geth stderr streaming task ended");
++            });
++        } else {
++            warn!("No stderr handle available for geth");
++        }
+ 
+-        // Skip the sleep entirely to test if the function can return
+-        info!("Skipping sleep - returning immediately");
++        // Give the node more time to start up
++        info!("Waiting for geth to initialize...");
++        sleep(Duration::from_secs(15)).await;
++        info!("Finished waiting for geth initialization");
++
++        // Check if the process is still alive
++        match child.try_wait() {
++            Ok(Some(status)) => {
++                return Err(eyre!(
++                    "Geth process exited during initialization with status: {:?}. This suggests geth failed to start properly.",
++                    status
++                ));
++            }
++            Ok(None) => {
++                info!("Geth process is still running after initialization");
++            }
++            Err(e) => {
++                return Err(eyre!("Failed to check geth process status: {}", e));
++            }
++        }
+ 
+         Ok(child)
+     }
+@@ -320,34 +367,42 @@ impl EthereumClient for GethClient {
+         let check_interval = Duration::from_secs(2);
+         let rpc_url = "http://localhost:8545";
+ 
++        // Create Alloy provider outside the timeout block
++        info!("Parsing RPC URL: {}", rpc_url);
++        let url = rpc_url
++            .parse()
++            .map_err(|e| eyre!("Invalid RPC URL '{}': {}", rpc_url, e))?;
++        info!("Creating Alloy provider...");
++        let provider = ProviderBuilder::new().connect_http(url);
++        info!("Provider created successfully");
++
+         info!("Starting timeout block with max_wait: {:?}", max_wait);
+-        let result = timeout(max_wait, async move {
++        let start_time = std::time::Instant::now();
++        let result = timeout(max_wait, async {
+             info!("Inside timeout async block");
+-            
+-            // Create Alloy provider inside async block
+-            info!("Parsing RPC URL: {}", rpc_url);
+-            let url = rpc_url
+-                .parse()
+-                .map_err(|e| eyre!("Invalid RPC URL '{}': {}", rpc_url, e))?;
+-            info!("Creating Alloy provider inside async block...");
+-            let provider = ProviderBuilder::new().connect_http(url);
+-            info!("Provider created inside async block");
++            let mut iteration = 0;
+             loop {
+-                info!("Checking geth RPC status...");
++                iteration += 1;
++                let elapsed = start_time.elapsed();
++                info!("Checking geth RPC status... (iteration #{}, elapsed: {:?})", iteration, elapsed);
++
+                 // First check if RPC is up and node is not syncing
++                info!("Calling provider.syncing()...");
+                 match provider.syncing().await {
+                     Ok(sync_result) => {
++                        info!("Successfully got sync result: {:?}", sync_result);
+                         match sync_result {
+                             SyncStatus::Info(sync_info)
+                                 if sync_info.current_block != sync_info.highest_block =>
+                             {
+-                                info!("Geth node is still syncing: current_block={}, highest_block={}, waiting...", 
++                                info!("Geth node is still syncing: current_block={}, highest_block={}, waiting...",
+                                       sync_info.current_block, sync_info.highest_block);
+                             }
+                             SyncStatus::Info(sync_info) => {
+-                                info!("Geth node sync status: current_block={}, highest_block={} (synced)", 
++                                info!("Geth node sync status: current_block={}, highest_block={} (synced)",
+                                       sync_info.current_block, sync_info.highest_block);
+                                 // Node is synced, now get the tip
++                                info!("Node is synced, getting block number...");
+                                 match provider.get_block_number().await {
+                                     Ok(tip) => {
+                                         info!("Geth node is ready and not syncing at block: {}", tip);
+@@ -361,6 +416,7 @@ impl EthereumClient for GethClient {
+                             SyncStatus::None => {
+                                 info!("Geth node is not syncing (SyncStatus::None)");
+                                 // Node is not syncing, now get the tip
++                                info!("Node not syncing, getting block number...");
+                                 match provider.get_block_number().await {
+                                     Ok(tip) => {
+                                         info!("Geth node is ready and not syncing at block: {}", tip);
+@@ -378,12 +434,15 @@ impl EthereumClient for GethClient {
+                     }
+                 }
+ 
++                info!("Sleeping for {:?} before next check...", check_interval);
+                 sleep(check_interval).await;
++                info!("Sleep completed, continuing loop...");
+             }
+         })
+         .await
+         .wrap_err("Timed out waiting for geth node to be ready and synced")?;
+ 
++        info!("Successfully exited timeout block, total elapsed: {:?}", start_time.elapsed());
+         result
+     }
+ 
+@@ -499,4 +558,8 @@ impl EthereumClient for GethClient {
+     fn requires_node_for_unwind(&self) -> bool {
+         true // Geth uses debug_setHead RPC which requires running node
+     }
++
++    fn get_jwt_secret_path(&self) -> PathBuf {
++        self.get_jwt_secret_path()
++    }
+ }
+diff --git a/src/clients/reth.rs b/src/clients/reth.rs
+index 602cc8f..25a926f 100644
+--- a/src/clients/reth.rs
++++ b/src/clients/reth.rs
+@@ -514,4 +514,15 @@ impl EthereumClient for RethClient {
+     fn requires_node_for_unwind(&self) -> bool {
+         false // Reth uses offline stage unwind command
+     }
++
++    fn get_jwt_secret_path(&self) -> PathBuf {
++        // For reth, use the CLI args JWT path (default reth convention)
++        if let Some(ref datadir) = self.datadir {
++            // Use same logic as CLI: <datadir>/<chain>/jwt.hex
++            let chain_path = PathBuf::from(datadir).join(self.chain.to_string());
++            chain_path.join("jwt.hex")
++        } else {
++            PathBuf::from("./jwt.hex")
++        }
++    }
+ }
+\ No newline at end of file

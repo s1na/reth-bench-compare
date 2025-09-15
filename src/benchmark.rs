@@ -31,6 +31,16 @@ impl BenchmarkRunner {
         }
     }
 
+    /// Create a new BenchmarkRunner with a specific JWT secret path
+    pub fn new_with_jwt_path(args: &Args, jwt_secret_path: &std::path::Path) -> Self {
+        Self {
+            rpc_url: args.get_rpc_url(),
+            jwt_secret: jwt_secret_path.to_string_lossy().to_string(),
+            wait_time: args.wait_time.clone(),
+            warmup_blocks: args.get_warmup_blocks(),
+        }
+    }
+
     /// Clear filesystem caches (page cache, dentries, and inodes)
     pub async fn clear_fs_caches() -> Result<()> {
         info!("Clearing filesystem caches...");

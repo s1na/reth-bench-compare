@@ -514,4 +514,15 @@ impl EthereumClient for RethClient {
     fn requires_node_for_unwind(&self) -> bool {
         false // Reth uses offline stage unwind command
     }
+
+    fn get_jwt_secret_path(&self) -> PathBuf {
+        // For reth, use the CLI args JWT path (default reth convention)
+        if let Some(ref datadir) = self.datadir {
+            // Use same logic as CLI: <datadir>/<chain>/jwt.hex
+            let chain_path = PathBuf::from(datadir).join(self.chain.to_string());
+            chain_path.join("jwt.hex")
+        } else {
+            PathBuf::from("./jwt.hex")
+        }
+    }
 }

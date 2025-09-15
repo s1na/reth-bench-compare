@@ -41,4 +41,7 @@ pub trait EthereumClient: Send + Sync {
 
     /// Returns true if this client requires the node to be running for unwind operations
     fn requires_node_for_unwind(&self) -> bool;
+
+    /// Get the JWT secret path for this client
+    fn get_jwt_secret_path(&self) -> PathBuf;
 }
