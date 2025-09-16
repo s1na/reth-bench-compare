@@ -62,3 +62,12 @@ recipe.json
 
 # Benchmark comparison output directory
 /reth-bench-compare/
+
+# Claude Code settings and artifacts
+.claude/
+CLAUDE.md.swp
+.CLAUDE.md.swp
+*claude*
+*CLAUDE*
+
+patch
