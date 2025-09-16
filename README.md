@@ -43,6 +43,8 @@ cargo build --release
 
 ### Basic Usage
 
+The tool assumes you are currently in the working directory of the client in question.
+
 ```bash
 reth-bench-compare \
   --baseline-ref main \
@@ -50,6 +52,22 @@ reth-bench-compare \
   --blocks 100 \
   --datadir /path/to/reth/datadir
 ```
+
+### Geth client
+
+First, build `reth-bench-compare` according to instructions above. Then change directory to the `go-ethereum` dir:
+
+```bash
+cd <SOME_PATH>/go-ethereum
+```
+
+We can then initiate the benchmarking process and specify the `--client geth` flag.
+
+```bash
+/PATH/TO/reth-bench-compare --client geth --baseline-ref v1.16.3 --feature-ref master --blocks 10 --chain sepolia --output-dir ./result --rpc-url https://ethereum-sepolia-rpc.publicnode.com --datadir ~/datadir-el/ -vvv
+```
+
+If you'd like the tool to draw charts, make sure you have `uv` installed and the `reth` repo cloned. Then you can pass in `--draw --chart-script PATH/TO/reth/bin/reth-bench/scripts/compare_newpayload_latency.py`.
 
 ### Advanced Options
 
