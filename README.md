@@ -61,7 +61,7 @@ First, build `reth-bench-compare` according to instructions above. Then change d
 cd <SOME_PATH>/go-ethereum
 ```
 
-We can then initiate the benchmarking process and specify the `--client geth` flag.
+We can then initiate the benchmarking process and specify the `--client geth` flag. Ideally at this point you have a datadir that has synced a segment of the chain. Because `reth-bench-compare` will fetch a given number of blocks from an RPC provider and apply them on top of the existing datadir (rewinding back after benchmark, so it is side-effect free).
 
 ```bash
 /PATH/TO/reth-bench-compare --client geth --baseline-ref v1.16.3 --feature-ref master --blocks 10 --chain sepolia --output-dir ./result --rpc-url https://ethereum-sepolia-rpc.publicnode.com --datadir ~/datadir-el/ -vvv
